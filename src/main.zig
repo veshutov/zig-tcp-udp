@@ -21,17 +21,24 @@ fn listenTcp() !void {
     try posix.bind(listener, &address.any, address.getOsSockLen());
     try posix.listen(listener, 128);
 
-    var buf: [128]u8 = undefined;
     var client_address: net.Address = undefined;
     var client_address_len: posix.socklen_t = @sizeOf(net.Address);
-    const socket = try posix.accept(listener, &client_address.any, &client_address_len, 0);
-    defer posix.close(socket);
-    std.debug.print("{} connected\n", .{client_address});
+    while (true) {
+        const socket = try posix.accept(listener, &client_address.any, &client_address_len, 0);
+        errdefer posix.close(socket);
+        std.debug.print("{} connected\n", .{client_address});
+        _ = try std.Thread.spawn(.{}, handleTcpConnection, .{ socket, client_address });
+    }
+}
 
+fn handleTcpConnection(socket: posix.socket_t, client_address: net.Address) !void {
+    defer posix.close(socket);
+    var buf: [128]u8 = undefined;
     while (true) {
         const read = try posix.read(socket, &buf);
         if (read == 0) {
-            continue;
+            std.debug.print("{} disconnected\n", .{client_address});
+            break;
         }
         _ = try posix.write(socket, buf[0..read]);
     }
