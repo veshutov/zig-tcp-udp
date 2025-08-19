@@ -3,15 +3,14 @@ const net = std.net;
 const posix = std.posix;
 
 pub fn main() !void {
-    var tcpServer = try std.Thread.spawn(.{}, listenTcp, .{});
-    var udpServer = try std.Thread.spawn(.{}, listenUdp, .{});
+    const address = try net.Address.parseIp("127.0.0.1", 8086);
+    var tcpServer = try std.Thread.spawn(.{}, listenTcp, .{address});
+    var udpServer = try std.Thread.spawn(.{}, listenUdp, .{address});
     tcpServer.join();
     udpServer.join();
 }
 
-fn listenTcp() !void {
-    const address = try std.net.Address.parseIp("127.0.0.1", 8086);
-
+fn listenTcp(address: net.Address) !void {
     const tpe: u32 = posix.SOCK.STREAM;
     const protocol = posix.IPPROTO.TCP;
     const listener = try posix.socket(address.any.family, tpe, protocol);
@@ -19,7 +18,8 @@ fn listenTcp() !void {
 
     try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
     try posix.bind(listener, &address.any, address.getOsSockLen());
-    try posix.listen(listener, 128);
+    const backlog = 128;
+    try posix.listen(listener, backlog);
 
     var client_address: net.Address = undefined;
     var client_address_len: posix.socklen_t = @sizeOf(net.Address);
@@ -44,9 +44,7 @@ fn handleTcpConnection(socket: posix.socket_t, client_address: net.Address) !voi
     }
 }
 
-fn listenUdp() !void {
-    const address = try std.net.Address.parseIp("127.0.0.1", 8086);
-
+fn listenUdp(address: net.Address) !void {
     const tpe: u32 = posix.SOCK.DGRAM;
     const protocol = posix.IPPROTO.UDP;
     const socket = try posix.socket(address.any.family, tpe, protocol);
