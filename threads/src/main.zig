@@ -64,9 +64,6 @@ fn listenUdp(address: net.Address) !void {
         var client_addr_len: posix.socklen_t = @sizeOf(posix.sockaddr);
 
         const read_len = try posix.recvfrom(socket, &buf, 0, &client_addr, &client_addr_len);
-        if (read_len == 0) {
-            continue;
-        }
         std.debug.print("UDP read {} bytes\n", .{read_len});
 
         const sendto_len = try posix.sendto(socket, buf[0..read_len], 0, &client_addr, client_addr_len);
