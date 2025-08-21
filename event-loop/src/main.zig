@@ -25,13 +25,16 @@ pub fn main() !void {
 
     const tcp_accept_data = try gpa.create(TcpAcceptData);
     defer gpa.destroy(tcp_accept_data);
-    tcp_accept_data.* = TcpAcceptData{ .allocator = gpa, .completion = .{
-        .op = .{
-            .accept = .{ .socket = tcp_listener },
+    tcp_accept_data.* = TcpAcceptData{
+        .allocator = gpa,
+        .completion = .{
+            .op = .{
+                .accept = .{ .socket = tcp_listener },
+            },
+            .userdata = tcp_accept_data,
+            .callback = tcpAcceptCallback,
         },
-        .userdata = tcp_accept_data,
-        .callback = tcpAcceptCallback,
-    } };
+    };
     loop.add(&tcp_accept_data.completion);
 
     // start UDP server
@@ -50,12 +53,14 @@ pub fn main() !void {
             .op = .{
                 .recvfrom = .{
                     .fd = udp_socket,
-                    .buffer = .{ .slice = &udp_recv_data.buffer }
+                    .buffer = .{
+                        .slice = &udp_recv_data.buffer,
+                    },
                 },
             },
             .userdata = udp_recv_data,
-            .callback = udpRecvCallback
-        }
+            .callback = udpRecvCallback,
+        },
     };
     loop.add(&udp_recv_data.completion);
 
@@ -80,20 +85,30 @@ fn tcpAcceptCallback(
         std.log.err("TCP accept failed: {}", .{err});
         return .disarm;
     };
-    errdefer posix.close(socket);
     const client_address = net.Address.initPosix(@alignCast(&comp.op.accept.addr));
     std.debug.print("TCP {} connected\n", .{client_address});
 
-    const read_data = allocator.create(TcpReadData) catch @panic("Could not allocate memory");
-    errdefer allocator.destroy(read_data);
-    read_data.* = TcpReadData{ .allocator = allocator, .buffer = undefined, .completion = .{
-        .op = .{ .read = .{
-            .fd = socket,
-            .buffer = .{ .slice = &read_data.buffer },
-        } },
-        .callback = tcpReadCallback,
-        .userdata = read_data,
-    } };
+    const read_data = allocator.create(TcpReadData) catch |e| {
+        std.debug.print("TCP allocation error {}\n", .{e});
+        posix.close(socket);
+        return .disarm;
+    };
+    read_data.* = TcpReadData{
+        .allocator = allocator,
+        .buffer = undefined,
+        .completion = .{
+            .op = .{
+                .read = .{
+                    .fd = socket,
+                    .buffer = .{
+                        .slice = &read_data.buffer,
+                    },
+                },
+            },
+            .callback = tcpReadCallback,
+            .userdata = read_data,
+        },
+    };
     loop.add(&read_data.completion);
 
     return .rearm;
@@ -114,9 +129,7 @@ fn tcpReadCallback(
     const read_data = @as(*TcpReadData, @ptrCast(@alignCast(ud.?)));
     const read = comp.op.read;
     const socket = read.fd;
-    errdefer posix.close(socket);
     const allocator = read_data.allocator;
-    errdefer allocator.destroy(read_data);
 
     const read_len = result.read catch {
         std.debug.print("TCP {} disconnected\n", .{socket});
@@ -127,8 +140,12 @@ fn tcpReadCallback(
     std.debug.print("TCP read {} bytes\n", .{read_len});
 
     // schedule write
-    const write_data = allocator.create(TcpWriteData) catch @panic("Could not allocate memory");
-    errdefer allocator.destroy(write_data);
+    const write_data = allocator.create(TcpWriteData) catch |e| {
+        std.debug.print("TCP allocation error {}\n", .{e});
+        posix.close(socket);
+        allocator.destroy(read_data);
+        return .disarm;
+    };
     write_data.* = TcpWriteData{ .allocator = allocator, .buffer = undefined, .completion = .{
         .op = .{
             .write = .{ .fd = socket, .buffer = .{ .slice = write_data.buffer[0..read_len] } },
@@ -194,15 +211,27 @@ fn udpRecvCallback(
     const client_address = net.Address.initPosix(@alignCast(&recvfrom.addr));
 
     // schedule write
-    const sendto_data = allocator.create(UdpSendtoData) catch @panic("Could not allocate memory");
-    errdefer allocator.destroy(sendto_data);
-    sendto_data.* = UdpSendtoData{ .allocator = allocator, .buffer = undefined, .completion = .{
-        .op = .{
-            .sendto = .{ .fd = socket, .addr = client_address, .buffer = .{ .slice = sendto_data.buffer[0..read_len] } },
+    const sendto_data = allocator.create(UdpSendtoData) catch |e| {
+        std.debug.print("UDP allocation error {}\n", .{e});
+        return .disarm;
+    };
+    sendto_data.* = UdpSendtoData{
+        .allocator = allocator,
+        .buffer = undefined,
+        .completion = .{
+            .op = .{
+                .sendto = .{
+                    .fd = socket,
+                    .addr = client_address,
+                    .buffer = .{
+                        .slice = sendto_data.buffer[0..read_len],
+                    },
+                },
+            },
+            .userdata = sendto_data,
+            .callback = udpSendtoCallback,
         },
-        .userdata = sendto_data,
-        .callback = udpSendtoCallback,
-    } };
+    };
     @memcpy(sendto_data.buffer[0..read_len], recvfrom.buffer.slice[0..read_len]);
     loop.add(&sendto_data.completion);
 
