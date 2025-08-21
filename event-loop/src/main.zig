@@ -43,13 +43,20 @@ pub fn main() !void {
 
     const udp_recv_data = try gpa.create(UdpRecvData);
     defer gpa.destroy(udp_recv_data);
-    udp_recv_data.* = UdpRecvData{ .allocator = gpa, .buffer = undefined, .completion = .{
-        .op = .{
-            .recvfrom = .{ .fd = udp_socket, .buffer = .{ .slice = &udp_recv_data.buffer } },
-        },
-        .userdata = udp_recv_data,
-        .callback = udpRecvCallback,
-    } };
+    udp_recv_data.* = UdpRecvData{
+        .allocator = gpa,
+        .buffer = undefined,
+        .completion = .{
+            .op = .{
+                .recvfrom = .{
+                    .fd = udp_socket,
+                    .buffer = .{ .slice = &udp_recv_data.buffer }
+                },
+            },
+            .userdata = udp_recv_data,
+            .callback = udpRecvCallback
+        }
+    };
     loop.add(&udp_recv_data.completion);
 
     try loop.run(.until_done);
@@ -188,6 +195,7 @@ fn udpRecvCallback(
 
     // schedule write
     const sendto_data = allocator.create(UdpSendtoData) catch @panic("Could not allocate memory");
+    errdefer allocator.destroy(sendto_data);
     sendto_data.* = UdpSendtoData{ .allocator = allocator, .buffer = undefined, .completion = .{
         .op = .{
             .sendto = .{ .fd = socket, .addr = client_address, .buffer = .{ .slice = sendto_data.buffer[0..read_len] } },
