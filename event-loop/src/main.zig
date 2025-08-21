@@ -96,6 +96,7 @@ fn tcpAcceptCallback(
     read_data.* = TcpReadData{
         .allocator = allocator,
         .buffer = undefined,
+        .client_address = client_address,
         .completion = .{
             .op = .{
                 .read = .{
@@ -117,6 +118,7 @@ fn tcpAcceptCallback(
 const TcpReadData = struct {
     allocator: std.mem.Allocator,
     buffer: [128]u8,
+    client_address: net.Address,
     completion: xev.Completion,
 };
 
@@ -132,7 +134,7 @@ fn tcpReadCallback(
     const allocator = read_data.allocator;
 
     const read_len = result.read catch {
-        std.debug.print("TCP {} disconnected\n", .{socket});
+        std.debug.print("TCP {} disconnected\n", .{read_data.client_address});
         posix.close(socket);
         allocator.destroy(read_data);
         return .disarm;
@@ -146,13 +148,22 @@ fn tcpReadCallback(
         allocator.destroy(read_data);
         return .disarm;
     };
-    write_data.* = TcpWriteData{ .allocator = allocator, .buffer = undefined, .completion = .{
-        .op = .{
-            .write = .{ .fd = socket, .buffer = .{ .slice = write_data.buffer[0..read_len] } },
+    write_data.* = TcpWriteData{
+        .allocator = allocator,
+        .buffer = undefined,
+        .completion = .{
+            .op = .{
+                .write = .{
+                    .fd = socket,
+                    .buffer = .{
+                        .slice = write_data.buffer[0..read_len],
+                    },
+                },
+            },
+            .userdata = write_data,
+            .callback = tcpWriteCallback,
         },
-        .userdata = write_data,
-        .callback = tcpWriteCallback,
-    } };
+    };
     @memcpy(write_data.buffer[0..read_len], read.buffer.slice[0..read_len]);
     loop.add(&write_data.completion);
 
